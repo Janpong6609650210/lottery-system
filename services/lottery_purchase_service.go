@@ -1,20 +1,20 @@
-gopackage services
+gopackage repositories
 
 import "lottery-system/models"
 
-type LotteryPurchaseService struct{}
+type LotteryTicketRepository struct{}
 
-// param: userId string, ticketNumber string
-// return: models.Order, error
-func (s *LotteryPurchaseService) CreateOrder(userId string, ticketNumber string) (models.Order, error) {
+// param: ticketNumber string
+// return: *models.LotteryTicket (nil ถ้าไม่เจอ), error
+func (r *LotteryTicketRepository) FindByTicketNumber(ticketNumber string) (*models.LotteryTicket, error) {
 }
 
-// param: orderId string
-// return: bool (true = ยังอยู่ในเวลาที่กำหนด), error
-func (s *LotteryPurchaseService) ValidateTimeout(orderId string) (bool, error) {
+// param: order models.Order
+// return: models.Order (saved), error
+func (r *LotteryTicketRepository) SaveOrder(order models.Order) (models.Order, error) {
 }
 
 // param: userId string
 // return: []models.LotteryTicket, error
-func (s *LotteryPurchaseService) GetInventoryByUser(userId string) ([]models.LotteryTicket, error) {
-} 
+func (r *LotteryTicketRepository) FindTicketsByUserId(userId string) ([]models.LotteryTicket, error) {
+}
