@@ -1,0 +1,90 @@
+@startuml
+
+!theme plain
+skinparam {
+    Shadowing false
+    RoundCorner 8
+    DefaultFontName "Arial"
+    ArrowColor #4A5568
+    ActorBorderColor #2D3748
+    ActorBackgroundColor #E2E8F0
+}
+
+skinparam usecase {
+    BackgroundColor #FFFFFF
+    BorderColor #3B82F6
+    ArrowColor #3B82F6
+    FontSize 12
+}
+
+skinparam package {
+    BackgroundColor #F9FAFB
+    BorderColor #D1D5DB
+    TitleFontSize 14
+}
+
+left to right direction
+title Digital Lottery Platform — Use Case Diagram
+
+actor "ผู้ใช้งาน (Customer)" as User
+actor "Admin" as Admin
+
+rectangle "Digital Lottery Platform" #FFFFFF {
+
+  package "จัดการบัญชี (Account)" {
+    usecase "UC01: สมัครสมาชิก" as UC01
+    usecase "UC02: เข้าสู่ระบบ" as UC02
+    usecase "UC03: จัดการข้อมูลส่วนตัว" as UC03
+  }
+
+  package "ซื้อสลาก (Purchase)" {
+    usecase "UC04: ค้นหา / เลือกหมายเลข" as UC04
+    usecase "UC05: จองสลาก" as UC05
+    usecase "UC06: ชำระเงิน" as UC06
+    usecase "UC07: ยืนยันการซื้อสำเร็จ" as UC07
+  }
+
+  package "คลังสลาก (My Tickets)" {
+    usecase "UC08: ดูสลากที่ซื้อแล้ว" as UC08
+    usecase "UC09: ตรวจผลรางวัล" as UC09
+  }
+
+  package "รางวัลและการเงิน (Prize)" {
+    usecase "UC10: รับแจ้งเตือนผลรางวัล" as UC10
+    usecase "UC11: ขอรับเงินรางวัล" as UC11
+    usecase "UC12: ดูประวัติรายการ" as UC12
+  }
+
+  package "จัดการระบบ (Admin)" {
+    usecase "UC13: บันทึกผลการออกรางวัล" as UC13
+    usecase "UC14: เพิ่มสลากเข้าระบบ" as UC14
+    usecase "UC15: ดู Audit Log" as UC15
+  }
+}
+
+'User relations
+User --> UC01
+User --> UC02
+User --> UC03
+User --> UC04
+User --> UC05
+User --> UC06
+User --> UC08
+User --> UC09
+User --> UC11
+User --> UC12
+
+'Admin relations
+Admin --> UC13
+Admin --> UC14
+Admin --> UC15
+
+'Include / Extend
+UC05 .> UC04 : <<include>>
+UC06 .> UC05 : <<include>>
+UC07 .> UC06 : <<include>>
+UC09 .> UC10 : <<extend>>
+UC11 .> UC09 : <<include>>
+UC13 .> UC09 : <<extend>>
+
+@enduml
