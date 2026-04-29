@@ -1,4 +1,4 @@
-@startuml sequence_diagram
+@startuml digital_lottery_sequence_diagram
 title Digital Lottery Platform - Purchase Ticket Sequence Diagram
 
 actor Customer
@@ -17,7 +17,7 @@ participant "Audit Log Service" as AUDIT
 
 == 0. เข้าสู่ระบบ (FR-02) [ขั้นตอนแรก] ==
 
-Customer -> FE : ป้อน Email/Passwrd
+Customer -> FE : ป้อน Email/Password
 FE -> LB : POST /login\n[Email, Password]
 LB -> ACC : ส่งข้อมูลประจำตัว
 
@@ -25,7 +25,9 @@ ACC -> PG : ค้นหาผู้ใช้
 PG --> ACC : พบผู้ใช้
 
 ACC -> ACC : ตรวจสอบ Password + สร้าง token\n(JWT/Session)
-ACC --> FE : ส่งคืน token + ข้อมูลผู้ใช้
+
+ACC --> LB : ส่งคืน token + ข้อมูลผู้ใช้
+LB --> FE : ส่งคืน token + ข้อมูลผู้ใช้
 
 FE -> FE : เก็บ token (localStorage/sessionStorage)
 
@@ -117,6 +119,9 @@ alt ชำระเงินสำเร็จ
     PAY -> MDB : อัปเดตสถานะสลาก = ขายแล้ว\n(วันที่ซื้อ, ID ผู้ใช้, ID ธุรกรรมชำระเงิน)
     MDB --> PAY : สำเร็จ
 
+    PAY -> Redis : ปล่อย Lock แบบกระจาย\n(ชำระสำเร็จแล้ว ไม่ต้องล็อคอีก)
+    Redis --> PAY : ปล่อย Lock ✓
+
     PAY -> AUDIT : บันทึก log การทำธุรกรรมชำระเงิน\n(Action: ชำระเงินสำเร็จ, ID ผู้ใช้, จำนวนเงิน, ID ธุรกรรม)
     AUDIT --> PAY : บันทึกแล้ว ✓
 
@@ -137,7 +142,7 @@ else ชำระเงินล้ม
     FE -> Customer : แสดงข้อผิดพลาดและตัวเลือกลองใหม่
 end
 
-== 4. ยืนยันการซื้อ (FR-07, UC-07 [include UC-06]) ==
+== 4. ยืนยันการซื้อ (FR-05 ต่อเนื่อง, UC-07 [include UC-06]) ==
 
 par Async Event Processing
     PAY -> MQ : เผยแพร่ purchase event\n(ID ผู้ใช้, ID สลาก, ใบเสร็จการซื้อ, ID ธุรกรรม)
@@ -151,7 +156,7 @@ end
 
 FE -> Customer : แสดงการยืนยันการซื้อ\n(หมายเลขสลาก, จำนวนเงิน, วันที่)
 
-== 5. การแจ้งเตือน (FR-10, UC-10 [extend UC-07 & UC-09]) ==
+== 5. การแจ้งเตือน (FR-10, UC-10 [extend UC-09]) ==
 
 note over MQ
 UC-10 การแจ้งเตือนสามารถเริ่มต้นได้จาก:
