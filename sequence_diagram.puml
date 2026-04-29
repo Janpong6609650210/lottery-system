@@ -1,10 +1,11 @@
-@startuml digital_lottery_sequence_diagram
-title Digital Lottery Platform - Purchase Ticket Sequence Diagram (FR-03 to FR-07)
+@startuml sequence_diagram
+title Digital Lottery Platform - Purchase Ticket Sequence Diagram
 
 actor Customer
 
 participant "React Frontend" as FE
 participant "Nginx Load Balancer" as LB
+participant "Account Service" as ACC
 participant "Purchase Service" as PS
 participant "Redis Cache / Lock" as Redis
 participant "MongoDB Ticket DB" as MDB
@@ -14,86 +15,174 @@ participant "RabbitMQ" as MQ
 participant "Notification Service" as NOTI
 participant "Audit Log Service" as AUDIT
 
-== 1. Search Ticket (FR-03) ==
+== 0. เข้าสู่ระบบ (FR-02) [ขั้นตอนแรก] ==
 
-Customer -> FE : Search lottery number
+Customer -> FE : ป้อน Email/Passwrd
+FE -> LB : POST /login\n[Email, Password]
+LB -> ACC : ส่งข้อมูลประจำตัว
+
+ACC -> PG : ค้นหาผู้ใช้
+PG --> ACC : พบผู้ใช้
+
+ACC -> ACC : ตรวจสอบ Password + สร้าง token\n(JWT/Session)
+ACC --> FE : ส่งคืน token + ข้อมูลผู้ใช้
+
+FE -> FE : เก็บ token (localStorage/sessionStorage)
+
+== 1. ค้นหาสลาก (FR-03, UC-04) ==
+
+Customer -> FE : ค้นหาหมายเลขสลาก
 FE -> LB : GET /tickets?number=xxxx\n[Token in Header]
-LB -> PS : Forward request + validate token
+LB -> ACC : ตรวจสอบ token
+ACC -> Redis : ตรวจเช็ก token จาก cache
+Redis --> ACC : token ถูกต้อง ✓
+ACC --> LB : ยืนยัน token ✓
 
-PS -> Redis : Check token cache
-Redis --> PS : Token valid ✓
+LB -> PS : ส่งต่อคำขอ + ผู้ใช้ที่ยืนยันแล้ว
 
-PS -> MDB : Query available tickets
-MDB --> PS : Ticket list
-PS --> FE : Return results
+PS -> MDB : ค้นหาสลากที่มีให้
+MDB --> PS : รายการสลาก
+PS --> FE : ส่งผลลัพธ์
 
-== 2. Reserve Ticket (FR-04) ==
+PS -> AUDIT : บันทึก Log การค้นหา\n(Action: ค้นหา, ID ผู้ใช้, เงื่อนไขการค้นหา)
+AUDIT --> PS : บันทึกแล้ว ✓
 
-Customer -> FE : Select ticket
+== 2. จองสลาก (FR-04, UC-05) ==
+
+Customer -> FE : เลือกสลาก
 FE -> LB : POST /reserve\n[Token in Header]
-LB -> PS : Reserve selected ticket + validate token
+LB -> ACC : ตรวจสอบ token
+ACC -> Redis : ตรวจเช็ก token จาก cache
+Redis --> ACC : token ถูกต้อง ✓
+ACC --> LB : ยืนยัน token ✓
 
-PS -> Redis : Acquire distributed lock\n(5 min TTL)
-Redis --> PS : Lock success
+LB -> PS : จองสลากที่เลือก + ผู้ใช้ที่ยืนยันแล้ว
 
-PS -> MDB : Update status = Reserved
-MDB --> PS : Success
+PS -> Redis : ขอ Lock แบบกระจาย\n(ระยะเวลาหมดอายุ 5 นาที)
+Redis --> PS : ล็อคสำเร็จ
 
-PS -> AUDIT : Log ticket reservation\n(Action: RESERVE, User ID, Ticket ID)
-AUDIT --> PS : Logged ✓
+PS -> MDB : อัปเดตสถานะ = จองแล้ว
+MDB --> PS : สำเร็จ
 
-PS --> FE : Reservation confirmed
-FE -> Customer : Reservation timer: 5 min (auto-release)
+PS -> AUDIT : บันทึก Log การจองสลาก\n(Action: จอง, ID ผู้ใช้, ID สลาก)
+AUDIT --> PS : บันทึกแล้ว ✓
+
+PS --> FE : ยืนยันการจอง\n(การจอง ID, หมดอายุใน: 5 นาที)
+FE -> Customer : ตัวจับเวลา: 5 นาที (ปล่อยอัตโนมัติ)
 
 note over Redis
-After 5 min with no payment:
-Auto-release lock
+หลังจาก 5 นาที หากไม่มีการชำระเงิน:
+จะปล่อย lock อัตโนมัติและเปลี่ยนสถานะกลับเป็น Available
 (NFR-R02 - Reservation Timeout)
 end note
 
-== 3. Payment (FR-05) ==
+== 3. ชำระเงิน (FR-05, UC-06) ==
 
-Customer -> FE : Confirm payment\n(PromptPay/Credit Card)
-FE -> LB : POST /payment\n[Token in Header]
-LB -> PAY : Payment request + validate token
+Customer -> FE : ยืนยันการชำระเงิน\n(PromptPay/บัตรเครดิต)
+FE -> LB : POST /payment\n[Token in Header, การจอง ID]
+LB -> ACC : ตรวจสอบ token 
+ACC -> Redis : ตรวจเช็ก token จาก cache
+Redis --> ACC : token ถูกต้อง ✓
+ACC --> LB : ยืนยัน token ✓
 
-PAY -> Redis : Verify ticket still locked\n(not expired)
-Redis --> PAY : Lock valid ✓
+LB -> PAY : คำขอชำระเงิน + ผู้ใช้ที่ยืนยันแล้ว
 
-PAY -> PG : Save transaction record\n(User ID, Ticket ID, Amount, Status: PENDING)
-PG --> PAY : Transaction created
+PAY -> Redis : ตรวจสอบว่าการจองสลากยังล็อคอยู่\n(ไม่หมดอายุ)
+Redis --> PAY : ล็อคถูกต้อง ✓
 
-PAY -> PAY : Process payment\n(Call external payment gateway)
+PAY -> PG : บันทึกการทำธุรกรรม\n(ID ผู้ใช้, ID สลาก, จำนวนเงิน, สถานะ: รอดำเนินการ)
+PG --> PAY : สร้างธุรกรรม (ID ธุรกรรม)
+
+PAY -> PAY : ประมวลผลการชำระเงิน ครั้งที่ 1\n(เรียกเกตเวย์ชำระเงินภายนอก - PromptPay/Stripe)
 note over PAY
-PromptPay/Stripe API call
-(NFR-R01 - Timeout & Retry: 10s)
+NFR-R01: นโยบายของ Timeout และ Retry
+- Timeout: 10 วินาที
+- Max retries: 3 ครั้ง
+- Retry delay: 2 วินาที Exponential backoff
 end note
 
-PAY -> PG : Update transaction\nStatus: SUCCESS
-PG --> PAY : Updated ✓
+par Retry Loop
+    PAY -> PAY : ลองชำระเงินใหม่ (ลองครั้งที่ 2-3 timeout)
+    note over PAY
+    หาก timeout หรือข้อผิดพลาดของเกตเวย์:
+    - รอ 2 วินาที retry (สูงสุด 3 ครั้งรวมทั้งสิ้น)
+    - หาก retry ทั้งหมดล้ม: บันทึก log error แจ้งให้ผู้ใช้ทราบ
+    end note
+end
 
-PAY -> MDB : Update ticket status = SOLD\n(Purchase date, User ID)
-MDB --> PAY : Success
+alt ชำระเงินสำเร็จ
+    PAY -> PG : อัปเดตการทำธุรกรรม\nสถานะ: สำเร็จ
+    PG --> PAY : อัปเดตแล้ว ✓
 
-PAY -> AUDIT : Log payment transaction\n(Action: PAYMENT, User ID, Amount, Gateway)
-AUDIT --> PAY : Logged ✓
+    PAY -> MDB : อัปเดตสถานะสลาก = ขายแล้ว\n(วันที่ซื้อ, ID ผู้ใช้, ID ธุรกรรมชำระเงิน)
+    MDB --> PAY : สำเร็จ
 
-== 4. Confirmation & Notification (FR-07, FR-10) ==
+    PAY -> AUDIT : บันทึก log การทำธุรกรรมชำระเงิน\n(Action: ชำระเงินสำเร็จ, ID ผู้ใช้, จำนวนเงิน, ID ธุรกรรม)
+    AUDIT --> PAY : บันทึกแล้ว ✓
 
-PAY -> MQ : Publish purchase event\n(User ID, Ticket ID, Purchase Receipt)
-MQ --> PAY : Queued ✓
+else ชำระเงินล้ม
+    PAY -> PG : อัปเดตการทำธุรกรรม\nสถานะ: ล้มเหลว
+    PG --> PAY : อัปเดตแล้ว ✓
 
-MQ -> NOTI : Consume event
-NOTI -> PG : Store notification record
-PG --> NOTI : Stored ✓
+    PAY -> Redis : ปล่อย Lock แบบกระจาย\n(อนุญาตให้ผู้อื่นจอง)
+    Redis --> PAY : ปล่อย Lock
 
-NOTI -> NOTI : Send Push Notification\n(Firebase FCM)
-NOTI --> Customer : "✓ Purchase successful\nTicket: XXXX\nAmount: $X.XX"
+    PAY -> MDB : เปลี่ยนสถานะสลากกลับ = Available
+    MDB --> PAY : สำเร็จ
 
-PAY --> FE : Purchase completed\n(Order ID, Receipt)
-FE -> Customer : Show purchase confirmation
+    PAY -> AUDIT : บันทึก log การทำธุรกรรมชำระเงิน\n(Action: ชำระเงินล้มเหลว, ID ผู้ใช้, เหตุผลข้อผิดพลาด, ID ธุรกรรม)
+    AUDIT --> PAY : บันทึกแล้ว ✓
 
-PAY -> AUDIT : Log purchase completion\n(Action: PURCHASE_COMPLETE, Status: SUCCESS)
-AUDIT --> PAY : Logged ✓
+    PAY --> FE : ชำระเงินล้มเหลว\n(ข้อความแสดงข้อผิดพลาด, ID ธุรกรรม)
+    FE -> Customer : แสดงข้อผิดพลาดและตัวเลือกลองใหม่
+end
+
+== 4. ยืนยันการซื้อ (FR-07, UC-07 [include UC-06]) ==
+
+par Async Event Processing
+    PAY -> MQ : เผยแพร่ purchase event\n(ID ผู้ใช้, ID สลาก, ใบเสร็จการซื้อ, ID ธุรกรรม)
+    MQ --> PAY : Queued ✓
+
+    PAY -> AUDIT : บันทึก log การจบสิ้นการซื้อ\n(การกระทำ: ซื้อสำเร็จ, ID ผู้ใช้, ID สลาก, สถานะ: สำเร็จ)
+    AUDIT --> PAY : บันทึกแล้ว ✓
+
+    PAY --> FE : การซื้อเสร็จแล้ว\n(ID คำสั่ง, ใบเสร็จ, เลขยืนยัน)
+end
+
+FE -> Customer : แสดงการยืนยันการซื้อ\n(หมายเลขสลาก, จำนวนเงิน, วันที่)
+
+== 5. การแจ้งเตือน (FR-10, UC-10 [extend UC-07 & UC-09]) ==
+
+note over MQ
+UC-10 การแจ้งเตือนสามารถเริ่มต้นได้จาก:
+1. การซื้อเสร็จแล้ว (UC-07)
+2. ประกาศผลรางวัล (UC-09)
+end note
+
+MQ -> NOTI : ใช้ purchase event\n(จากคิว RabbitMQ)
+
+NOTI -> PG : เก็บบันทึก notification\n(ID ผู้ใช้, ประเภท: การซื้อ, สถานะ: รอดำเนินการ)
+PG --> NOTI : เก็บแล้ว ✓
+
+NOTI -> NOTI : เตรียมข้อความ notification\n(สลาก: XXXX, จำนวนเงิน: $X.XX, สถานะ: สำเร็จ)
+
+par Push และ Email Notification
+    NOTI -> NOTI : ส่ง Push Notification\n(ผ่าน Firebase FCM)
+    NOTI --> Customer : "✓ การซื้อสำเร็จ\nสลาก: XXXX\nจำนวนเงิน: $X.XX\nเลขยืนยัน: ######"
+
+    note over NOTI
+    สามารถส่ง Notification ไปยัง Email ได้
+    สำหรับการเก็บรักษาใบเสร็จ
+    end note
+end
+
+NOTI -> PG : อัปเดตบันทึก notification\n(สถานะ: ส่งแล้ว, เวลา)
+PG --> NOTI : อัปเดตแล้ว ✓
+
+note over Customer
+ผู้ใช้ได้รับ notification
+ในแอป + mobile push + email
+(หากกำหนดค่าไว้)
+end note
 
 @enduml
