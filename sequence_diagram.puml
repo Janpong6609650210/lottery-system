@@ -1,0 +1,99 @@
+@startuml digital_lottery_sequence_diagram
+title Digital Lottery Platform - Purchase Ticket Sequence Diagram (FR-03 to FR-07)
+
+actor Customer
+
+participant "React Frontend" as FE
+participant "Nginx Load Balancer" as LB
+participant "Purchase Service" as PS
+participant "Redis Cache / Lock" as Redis
+participant "MongoDB Ticket DB" as MDB
+participant "Payment Service" as PAY
+participant "PostgreSQL" as PG
+participant "RabbitMQ" as MQ
+participant "Notification Service" as NOTI
+participant "Audit Log Service" as AUDIT
+
+== 1. Search Ticket (FR-03) ==
+
+Customer -> FE : Search lottery number
+FE -> LB : GET /tickets?number=xxxx\n[Token in Header]
+LB -> PS : Forward request + validate token
+
+PS -> Redis : Check token cache
+Redis --> PS : Token valid ✓
+
+PS -> MDB : Query available tickets
+MDB --> PS : Ticket list
+PS --> FE : Return results
+
+== 2. Reserve Ticket (FR-04) ==
+
+Customer -> FE : Select ticket
+FE -> LB : POST /reserve\n[Token in Header]
+LB -> PS : Reserve selected ticket + validate token
+
+PS -> Redis : Acquire distributed lock\n(5 min TTL)
+Redis --> PS : Lock success
+
+PS -> MDB : Update status = Reserved
+MDB --> PS : Success
+
+PS -> AUDIT : Log ticket reservation\n(Action: RESERVE, User ID, Ticket ID)
+AUDIT --> PS : Logged ✓
+
+PS --> FE : Reservation confirmed
+FE -> Customer : Reservation timer: 5 min (auto-release)
+
+note over Redis
+After 5 min with no payment:
+Auto-release lock
+(NFR-R02 - Reservation Timeout)
+end note
+
+== 3. Payment (FR-05) ==
+
+Customer -> FE : Confirm payment\n(PromptPay/Credit Card)
+FE -> LB : POST /payment\n[Token in Header]
+LB -> PAY : Payment request + validate token
+
+PAY -> Redis : Verify ticket still locked\n(not expired)
+Redis --> PAY : Lock valid ✓
+
+PAY -> PG : Save transaction record\n(User ID, Ticket ID, Amount, Status: PENDING)
+PG --> PAY : Transaction created
+
+PAY -> PAY : Process payment\n(Call external payment gateway)
+note over PAY
+PromptPay/Stripe API call
+(NFR-R01 - Timeout & Retry: 10s)
+end note
+
+PAY -> PG : Update transaction\nStatus: SUCCESS
+PG --> PAY : Updated ✓
+
+PAY -> MDB : Update ticket status = SOLD\n(Purchase date, User ID)
+MDB --> PAY : Success
+
+PAY -> AUDIT : Log payment transaction\n(Action: PAYMENT, User ID, Amount, Gateway)
+AUDIT --> PAY : Logged ✓
+
+== 4. Confirmation & Notification (FR-07, FR-10) ==
+
+PAY -> MQ : Publish purchase event\n(User ID, Ticket ID, Purchase Receipt)
+MQ --> PAY : Queued ✓
+
+MQ -> NOTI : Consume event
+NOTI -> PG : Store notification record
+PG --> NOTI : Stored ✓
+
+NOTI -> NOTI : Send Push Notification\n(Firebase FCM)
+NOTI --> Customer : "✓ Purchase successful\nTicket: XXXX\nAmount: $X.XX"
+
+PAY --> FE : Purchase completed\n(Order ID, Receipt)
+FE -> Customer : Show purchase confirmation
+
+PAY -> AUDIT : Log purchase completion\n(Action: PURCHASE_COMPLETE, Status: SUCCESS)
+AUDIT --> PAY : Logged ✓
+
+@enduml
