@@ -1,0 +1,104 @@
+@startuml
+' ==============================
+' Digital Lottery Platform ERD
+' ==============================
+skinparam linetype ortho
+skinparam roundcorner 8
+skinparam classBackgroundColor #EEF4FF
+skinparam classBorderColor #3B5BDB
+skinparam classArrowColor #3B5BDB
+skinparam classFontSize 13
+hide empty methods
+hide circle
+title Digital Lottery Platform — ER Diagram\n(PostgreSQL = Solid Lines | MongoDB = Note)
+' ==============================
+' PostgreSQL Tables
+' ==============================
+entity "users\n(Platform Users)" as User {
+  *user_id : UUID <<PK>>
+  --
+  full_name : VARCHAR
+  email : VARCHAR <<UNIQUE>>
+  phone : VARCHAR
+  password_hash : TEXT
+  bank_account_number : VARCHAR
+  bank_name : VARCHAR
+  created_at : TIMESTAMP
+}
+entity "draws\n(Lottery Draws)" as Draw {
+  *draw_id : UUID <<PK>>
+  --
+  draw_date : DATE
+  first_prize : VARCHAR(6)
+  status : ENUM('PENDING','ANNOUNCED')
+  announced_at : TIMESTAMP
+  announced_by : UUID <<FK → users>>
+}
+entity "orders\n(Purchase Orders)" as Order {
+  *order_id : UUID <<PK>>
+  --
+  user_id : UUID <<FK>>
+  lottery_number : VARCHAR(6)
+  draw_id : UUID <<FK>>
+  total_amount : DECIMAL
+  status : ENUM('PENDING_PAYMENT','PAID','CANCELLED','EXPIRED')
+  created_at : TIMESTAMP
+  expire_at : TIMESTAMP
+}
+entity "payments\n(Payment Transactions)" as Payment {
+  *payment_id : UUID <<PK>>
+  --
+  order_id : UUID <<FK>>
+  method : ENUM('PROMPTPAY','CREDIT_CARD')
+  amount : DECIMAL
+  status : ENUM('PENDING','SUCCESS','FAILED')
+  gateway_ref : TEXT
+  paid_at : TIMESTAMP
+}
+entity "prizes\n(Winning Records)" as Prize {
+  *prize_id : UUID <<PK>>
+  --
+  draw_id : UUID <<FK>>
+  user_id : UUID <<FK>>
+  order_id : UUID <<FK>>
+  prize_tier : VARCHAR
+  prize_amount : DECIMAL
+  status : ENUM('UNCLAIMED','CLAIMED','TRANSFERRED')
+  transferred_at : TIMESTAMP
+}
+entity "audit_logs\n(Activity Logs)" as Audit {
+  *log_id : UUID <<PK>>
+  --
+  user_id : UUID <<FK>>
+  action : VARCHAR
+  detail : TEXT
+  created_at : TIMESTAMP
+}
+' ==============================
+' Relationships
+' ==============================
+User ||--o{ Order   : places
+User ||--o{ Prize   : receives
+User ||--o{ Audit   : performs
+Order ||--|| Payment : paid_by
+Order }o--|| Draw    : belongs_to
+Prize }o--|| Draw    : based_on
+Prize }o--|| Order   : derived_from
+' ==============================
+' MongoDB Note
+' ==============================
+note bottom of Draw
+MongoDB (lottery_catalog collection)
+Used for storing lottery inventory separately:
+{
+  lottery_number: "123456",
+  draw_id: "...",
+  price: 80,
+  status: "AVAILABLE | RESERVED | SOLD",
+  reserved_until: timestamp
+}
+Reason:
+- Handles large volume of lottery tickets
+- Optimized for high-speed searching
+end note
+@enduml
