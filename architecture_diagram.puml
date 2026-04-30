@@ -1,0 +1,113 @@
+@startuml System Architecture - Digital Lottery Platform
+
+skinparam componentStyle rectangle
+skinparam linetype ortho
+skinparam backgroundColor #FAFAFA
+skinparam defaultFontSize 13
+
+skinparam component {
+  BackgroundColor #f8e3f0ff
+  BorderColor #db3b8bff
+}
+skinparam database {
+  BackgroundColor #dee9faff
+  BorderColor #2d266fff
+}
+skinparam queue {
+  BackgroundColor #E8F5E9
+  BorderColor #2E7D32
+}
+skinparam cloud {
+  BackgroundColor #FCE4EC
+  BorderColor #C62828
+}
+skinparam rectangle {
+  BackgroundColor #f5eeadff
+  BorderColor #eba742ff
+}
+
+title Digital Lottery Platform — System Architecture Diagram
+
+actor "ผู้ใช้งาน\n(Web / Mobile)" as User
+actor "Admin" as Admin
+
+' ── External Services ──
+cloud "บริการภายนอก (External)" {
+  component [Payment Gateway\n(PromptPay / Stripe)] as PayGW
+  component [Firebase FCM\n(Push Notification)] as FCM
+}
+
+' ── Edge Layer ──
+rectangle "Edge Layer" {
+  component [HTTPS / Firewall] as Firewall
+  component [Load Balancer\n(Nginx)\n— กระจาย Request —] as LB
+}
+
+' ── Backend Services ──
+rectangle "Backend Services (Horizontal Scaling)" {
+  component [API Gateway\n(Routing / Rate Limit)] as APIGW
+  component [Auth Service\n(Login / Token)] as Auth
+  component [Lottery Service\n(ค้นหา / จองสลาก)] as LotterySvc
+  component [Order Service\n(คำสั่งซื้อ)] as OrderSvc
+  component [Payment Service\n(ชำระเงิน)] as PaySvc
+  component [Prize Service\n(ตรวจรางวัล / โอนเงิน)] as PrizeSvc
+  component [Notification Service\n(แจ้งเตือน)] as NotiSvc
+  component [Audit Service\n(บันทึก Log)] as AuditSvc
+  component [Result Service\n(Admin: ประกาศผล)] as ResultSvc
+}
+
+' ── Message Queue (Async Communication) ──
+queue "Message Queue\n(RabbitMQ)\n— รับมือ Traffic สูง —" as MQ
+
+' ── Data Layer ──
+rectangle "Data Layer" {
+  database "PostgreSQL (SQL)\nผู้ใช้, คำสั่งซื้อ,\nการเงิน, รางวัล" as PostgreSQL
+  database "MongoDB (NoSQL)\nคลังสลาก\n(ค้นหาเร็ว)" as MongoDB
+  database "Redis Cache\nการจองสลาก\nSession Token" as Redis
+  database "PostgreSQL Replica\n(สำรอง — Fault Tolerance)" as PGReplica
+}
+
+' ── Traffic Flow ──
+User --> Firewall
+Admin --> Firewall
+Firewall --> LB
+LB --> APIGW : กระจาย Request
+
+APIGW --> Auth
+APIGW --> LotterySvc
+APIGW --> OrderSvc
+APIGW --> PrizeSvc
+APIGW --> ResultSvc
+
+' ── Service Logic ──
+LotterySvc --> Redis : เช็คสลากว่าง (Cache)
+LotterySvc --> MongoDB : ดึงข้อมูลสลาก
+
+OrderSvc --> Redis : ล็อคการจอง 5 นาที
+OrderSvc --> PaySvc
+PaySvc --> PayGW : ชำระเงิน
+
+' ── Async via Message Queue ──
+OrderSvc --> MQ : order.confirmed
+PaySvc --> MQ : payment.success
+ResultSvc --> MQ : draw.announced
+
+MQ --> NotiSvc : ส่งแจ้งเตือน
+MQ --> PrizeSvc : ตรวจผลรางวัล
+MQ --> AuditSvc : บันทึก Log
+
+NotiSvc --> FCM : Push Notification
+FCM --> User
+
+' ── Data Persistence ──
+Auth --> PostgreSQL
+OrderSvc --> PostgreSQL
+PaySvc --> PostgreSQL
+PrizeSvc --> PostgreSQL
+AuditSvc --> PostgreSQL
+ResultSvc --> PostgreSQL
+
+' ── Replication (Fault Tolerance) ──
+PostgreSQL --> PGReplica : Replication\n(ถ้า Primary ล่ม ใช้ Replica แทน)
+
+@enduml
